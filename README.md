@@ -150,7 +150,7 @@ real-estate-investment-advisor/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/real-estate-investment-advisor.git
+git clone https://github.com/Sabitha-23/real-estate-investment-advisor.git
 cd real-estate-investment-advisor
 ```
 
