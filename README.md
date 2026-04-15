@@ -199,6 +199,4 @@ This project demonstrates the use of **Machine Learning in Real Estate Analytics
 
 ---
 
-##  Contact
 
-If you like this project, feel free to connect and collaborate! 🚀
