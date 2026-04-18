@@ -28,58 +28,68 @@ st.markdown("""
     .main-header p  { color: #a8b2d8; font-size: 1rem; margin: 5px 0 0; }
     .good-box {
         background: linear-gradient(135deg, #0f9b58, #00c851);
-        padding: 20px; border-radius: 12px; text-align: center; color: white;
+        padding: 20px; border-radius: 12px;
+        text-align: center; color: white;
     }
     .bad-box {
         background: linear-gradient(135deg, #c0392b, #e74c3c);
-        padding: 20px; border-radius: 12px; text-align: center; color: white;
+        padding: 20px; border-radius: 12px;
+        text-align: center; color: white;
     }
-    .metric-box {
-        background: linear-gradient(135deg, #1a1a2e, #16213e);
-        padding: 15px; border-radius: 10px; text-align: center;
-        border: 1px solid #0f3460; color: white;
-    }
-    .metric-box h3 { color: #e94560; margin: 0; font-size: 1.5rem; }
-    .metric-box p  { color: #a8b2d8; margin: 5px 0 0; font-size: 0.85rem; }
-    div[data-testid="stSidebar"] { background: #1a1a2e; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load Models & Data ──
+# ── Load Models ──
 @st.cache_resource
 def load_models():
     clf_model    = joblib.load("models/clf_model.pkl")
     reg_model    = joblib.load("models/reg_model.pkl")
     clf_features = joblib.load("models/clf_feature_cols.pkl")
     reg_features = joblib.load("models/reg_feature_cols.pkl")
-    return clf_model, reg_model, clf_features, reg_features
+    scaler       = joblib.load("models/scaler.pkl")
+    return clf_model, reg_model, clf_features, reg_features, scaler
 
 @st.cache_data
 def load_data():
-    return pd.read_csv("data/india_housing_prices.csv")
+    df = pd.read_csv("data/india_housing_prices.csv")
+    df["Age_of_Property"]   = 2025 - df["Year_Built"]
+    df["Future_Price_5yr"]  = df["Price_in_Lakhs"] * (1.08 ** 5)
+    t_map = {"Low":1,"Medium":2,"High":3}
+    df["Transport_Num"]     = df["Public_Transport_Accessibility"].map(t_map)
+    df["Infrastructure_Score"] = (
+        df["Nearby_Schools"]   * 0.3 +
+        df["Nearby_Hospitals"] * 0.3 +
+        df["Transport_Num"]    * 0.4
+    ).round(2)
+    city_med = df.groupby("City")["Price_per_SqFt"].transform("median")
+    r1 = df["Price_per_SqFt"] <= city_med
+    r2 = df["BHK"] >= 2
+    r3 = df["Infrastructure_Score"] >= df["Infrastructure_Score"].median()
+    r4 = df["Age_of_Property"] <= 20
+    appr = (df["Future_Price_5yr"] - df["Price_in_Lakhs"]) / df["Price_in_Lakhs"]
+    r5 = appr >= 0.40
+    df["Good_Investment"] = (
+        (r1.astype(int)+r2.astype(int)+r3.astype(int)+
+         r4.astype(int)+r5.astype(int)) >= 4
+    ).astype(int)
+    return df
 
-clf_model, reg_model, clf_features, reg_features = load_models()
+clf_model, reg_model, clf_features, reg_features, scaler = load_models()
 df_raw = load_data()
 
-# Add engineered features to raw data
-df_raw["Age_of_Property"] = 2025 - df_raw["Year_Built"]
-df_raw["Future_Price_5yr"] = df_raw["Price_in_Lakhs"] * (1.08 ** 5)
-transport_map = {"Low": 1, "Medium": 2, "High": 3}
-df_raw["Transport_Num"] = df_raw["Public_Transport_Accessibility"].map(transport_map)
-df_raw["Infrastructure_Score"] = (
-    df_raw["Nearby_Schools"]   * 0.3 +
-    df_raw["Nearby_Hospitals"] * 0.3 +
-    df_raw["Transport_Num"]    * 0.4
-).round(2)
-city_median = df_raw.groupby("City")["Price_per_SqFt"].transform("median")
-r1 = df_raw["Price_per_SqFt"] <= city_median
-r2 = df_raw["BHK"] >= 2
-r3 = df_raw["Infrastructure_Score"] >= df_raw["Infrastructure_Score"].median()
-r4 = df_raw["Age_of_Property"] <= 20
-appreciation = (df_raw["Future_Price_5yr"] - df_raw["Price_in_Lakhs"]) / df_raw["Price_in_Lakhs"]
-r5 = appreciation >= 0.40
-df_raw["Good_Investment"] = ((r1.astype(int)+r2.astype(int)+r3.astype(int)+
-                               r4.astype(int)+r5.astype(int)) >= 4).astype(int)
+# ── Helper: Scale clf input correctly ──
+def prepare_clf_input(bhk, size, price, price_per_sqft,
+                      floor_no, total_floors, age, schools, hospitals):
+    """Scale input using the same scaler used during training"""
+    raw = pd.DataFrame([[bhk, size, price, price_per_sqft,
+                         floor_no, total_floors, age,
+                         schools, hospitals]],
+                       columns=clf_features)
+    # Only scale columns that scaler knows about
+    scale_cols = [c for c in clf_features
+                  if c in scaler.feature_names_in_]
+    raw[scale_cols] = scaler.transform(raw[scale_cols])
+    return raw
 
 # ── Header ──
 st.markdown("""
@@ -89,10 +99,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Navigation ──
+# ── Tabs ──
 tab1, tab2, tab3, tab4 = st.tabs([
     "🔍 Property Analyzer",
-    "🔎 Property Filter & Browse",
+    "🔎 Filter & Browse",
     "📊 Visual Insights",
     "🤖 Model Performance"
 ])
@@ -102,7 +112,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ══════════════════════════════════════════════
 with tab1:
     st.subheader("🔍 Property Investment Analyzer")
-    st.markdown("Enter property details below to get AI-powered investment advice.")
 
     col_l, col_r = st.columns([1, 2])
 
@@ -118,8 +127,8 @@ with tab1:
         st.markdown("#### 🏙️ Location & Amenities")
         schools   = st.slider("Nearby Schools",   1, 10, 4)
         hospitals = st.slider("Nearby Hospitals", 1, 10, 3)
-        transport = st.selectbox("Public Transport Accessibility",
-                                 ["Low", "Medium", "High"], index=1)
+        transport = st.selectbox("Public Transport",
+                                 ["Low","Medium","High"], index=1)
 
         analyze = st.button("🔍 Analyze Property",
                             use_container_width=True, type="primary")
@@ -130,17 +139,20 @@ with tab1:
             t_num          = {"Low":1,"Medium":2,"High":3}[transport]
             price_per_sqft = round(price / size, 4)
             infra_score    = round(schools*0.3 + hospitals*0.3 + t_num*0.4, 2)
-            school_den     = 1 if schools<=2 else (2 if schools<=5 else (3 if schools<=8 else 4))
-            hosp_den       = 1 if hospitals<=2 else (2 if hospitals<=5 else (3 if hospitals<=8 else 4))
+            school_den     = 1 if schools<=2 else (2 if schools<=5 else
+                             (3 if schools<=8 else 4))
+            hosp_den       = 1 if hospitals<=2 else (2 if hospitals<=5 else
+                             (3 if hospitals<=8 else 4))
             floor_ratio    = round(floor_no / max(total_floors,1), 3)
             value_score    = round(infra_score / (price_per_sqft + 1), 4)
 
-            # Build inputs
-            clf_input = pd.DataFrame(
-                [[bhk, size, price, price_per_sqft,
-                  floor_no, total_floors, age, schools, hospitals]],
-                columns=clf_features)
+            # ── FIXED: Scale clf input ──
+            clf_input = prepare_clf_input(
+                bhk, size, price, price_per_sqft,
+                floor_no, total_floors, age,
+                schools, hospitals)
 
+            # Regression input (uses raw engineered features)
             reg_input = pd.DataFrame(
                 [[bhk, size, price, price_per_sqft,
                   floor_no, total_floors, age, schools,
@@ -155,7 +167,7 @@ with tab1:
             gain         = future_price - price
             gain_pct     = (gain / price) * 100
 
-            # ── Result Box ──
+            # Result box
             if invest == 1:
                 st.markdown(f"""
                 <div class="good-box">
@@ -171,27 +183,26 @@ with tab1:
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── Metrics Row ──
+            # Metrics
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("💰 Future Price (5yr)", f"₹{future_price:.1f}L")
             m2.metric("📈 Expected Gain",
                       f"₹{gain:.1f}L", f"+{gain_pct:.1f}%")
-            m3.metric("🏗️ Infra Score",
-                      f"{infra_score:.2f}/7")
+            m3.metric("🏗️ Infra Score", f"{infra_score:.2f}/7")
             m4.metric("💎 Value Score", f"{value_score:.3f}")
 
             st.divider()
 
-            # ── Confidence Bar Chart ──
+            # Charts
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("#### 🎯 Prediction Confidence")
                 fig, ax = plt.subplots(figsize=(5, 3))
-                labels  = ["Not Recommended", "Good Investment"]
-                colors  = ["#e74c3c", "#2ecc71"]
-                bars    = ax.barh(labels, proba*100,
-                                  color=colors, edgecolor="white", height=0.5)
-                ax.set_xlim(0, 100)
+                labels = ["Not Recommended","Good Investment"]
+                colors = ["#e74c3c","#2ecc71"]
+                bars   = ax.barh(labels, proba*100,
+                                 color=colors, height=0.5)
+                ax.set_xlim(0,100)
                 ax.set_xlabel("Confidence (%)")
                 ax.set_facecolor("#1a1a2e")
                 fig.patch.set_facecolor("#1a1a2e")
@@ -202,13 +213,12 @@ with tab1:
                             f"{val:.1f}%", va="center",
                             color="white", fontsize=10)
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close()
+                st.pyplot(fig); plt.close()
 
             with c2:
                 st.markdown("#### 📊 Property Score Card")
-                categories = ["BHK Score","Size Score","Price Score",
-                              "Infra Score","Age Score"]
+                categories = ["BHK","Size","Affordability",
+                              "Infrastructure","Newness"]
                 scores = [
                     min(bhk/5*100, 100),
                     min(size/5000*100, 100),
@@ -217,118 +227,104 @@ with tab1:
                     max(100 - age/35*100, 10)
                 ]
                 fig, ax = plt.subplots(figsize=(5, 3))
-                colors_sc = ["#2ecc71" if s>=60 else "#f39c12"
-                             if s>=40 else "#e74c3c" for s in scores]
-                ax.barh(categories, scores, color=colors_sc,
-                        edgecolor="white", height=0.5)
-                ax.set_xlim(0, 100)
-                ax.set_xlabel("Score (%)")
+                clrs = ["#2ecc71" if s>=60 else
+                        "#f39c12" if s>=40 else
+                        "#e74c3c" for s in scores]
+                ax.barh(categories, scores,
+                        color=clrs, height=0.5)
+                ax.set_xlim(0,100)
                 ax.set_facecolor("#1a1a2e")
                 fig.patch.set_facecolor("#1a1a2e")
                 ax.tick_params(colors="white")
-                ax.xaxis.label.set_color("white")
-                for i, (s, cat) in enumerate(zip(scores, categories)):
+                for i, s in enumerate(scores):
                     ax.text(s+1, i, f"{s:.0f}%",
                             va="center", color="white", fontsize=9)
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close()
+                st.pyplot(fig); plt.close()
 
-            # ── Feature Importance ──
-            st.markdown("#### 🔑 Feature Importance (What Drives the Decision)")
+            # Feature Importance
+            st.markdown("#### 🔑 Feature Importance")
             if hasattr(clf_model, "feature_importances_"):
                 feat_imp = pd.Series(
                     clf_model.feature_importances_,
                     index=clf_features
-                ).sort_values(ascending=True).tail(9)
-
+                ).sort_values(ascending=True)
                 fig, ax = plt.subplots(figsize=(8, 3))
-                colors_fi = plt.cm.RdYlGn(
+                clrs_fi = plt.cm.RdYlGn(
                     np.linspace(0.2, 0.9, len(feat_imp)))
                 ax.barh(feat_imp.index, feat_imp.values,
-                        color=colors_fi, edgecolor="white")
+                        color=clrs_fi)
                 ax.set_facecolor("#1a1a2e")
                 fig.patch.set_facecolor("#1a1a2e")
                 ax.tick_params(colors="white")
-                ax.set_xlabel("Importance Score", color="white")
+                ax.set_xlabel("Importance", color="white")
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close()
+                st.pyplot(fig); plt.close()
 
         else:
-            st.info("👈 Fill in property details and click **Analyze Property** to get results")
-            # Show sample metrics
-            st.markdown("#### 📈 Model Overview")
-            o1, o2, o3, o4 = st.columns(4)
-            o1.metric("🏠 Properties Trained", "2,50,000")
-            o2.metric("🎯 Classification Accuracy", "95.44%")
-            o3.metric("📊 F1 Score", "0.9518")
-            o4.metric("📈 Regression R²", "1.00")
+            st.info("👈 Fill in property details and click **Analyze Property**")
+            o1,o2,o3,o4 = st.columns(4)
+            o1.metric("🏠 Properties Trained","2,50,000")
+            o2.metric("🎯 Accuracy","95.44%")
+            o3.metric("📊 F1 Score","0.9518")
+            o4.metric("📈 R²","1.00")
 
 # ══════════════════════════════════════════════
-# TAB 2 — Property Filter & Browse
+# TAB 2 — Filter & Browse
 # ══════════════════════════════════════════════
 with tab2:
     st.subheader("🔎 Filter & Browse Properties")
 
     f1, f2, f3 = st.columns(3)
     with f1:
-        bhk_filter   = st.multiselect("BHK", [1,2,3,4,5], default=[2,3])
-        city_filter  = st.multiselect("City",
-                        sorted(df_raw["City"].unique()),
-                        default=sorted(df_raw["City"].unique())[:3])
+        bhk_f  = st.multiselect("BHK", [1,2,3,4,5], default=[2,3])
+        city_f = st.multiselect("City",
+                   sorted(df_raw["City"].unique()),
+                   default=sorted(df_raw["City"].unique())[:3])
     with f2:
-        price_range  = st.slider("Price Range (Lakhs)",
-                        int(df_raw["Price_in_Lakhs"].min()),
-                        int(df_raw["Price_in_Lakhs"].max()),
-                        (50, 300))
-        prop_filter  = st.multiselect("Property Type",
-                        df_raw["Property_Type"].unique(),
-                        default=list(df_raw["Property_Type"].unique())[:2])
+        price_r = st.slider("Price (Lakhs)",
+                    int(df_raw["Price_in_Lakhs"].min()),
+                    int(df_raw["Price_in_Lakhs"].max()), (50,300))
+        prop_f  = st.multiselect("Property Type",
+                    list(df_raw["Property_Type"].unique()),
+                    default=list(df_raw["Property_Type"].unique())[:2])
     with f3:
-        area_range   = st.slider("Size Range (SqFt)",
-                        int(df_raw["Size_in_SqFt"].min()),
-                        int(df_raw["Size_in_SqFt"].max()),
-                        (800, 3000))
-        invest_only  = st.checkbox("Show Good Investments Only", value=False)
+        area_r   = st.slider("Size (SqFt)",
+                    int(df_raw["Size_in_SqFt"].min()),
+                    int(df_raw["Size_in_SqFt"].max()), (800,3000))
+        inv_only = st.checkbox("Good Investments Only")
 
-    # Apply filters
-    df_filtered = df_raw[
-        (df_raw["BHK"].isin(bhk_filter)) &
-        (df_raw["City"].isin(city_filter)) &
-        (df_raw["Price_in_Lakhs"].between(*price_range)) &
-        (df_raw["Property_Type"].isin(prop_filter)) &
-        (df_raw["Size_in_SqFt"].between(*area_range))
+    df_f = df_raw[
+        (df_raw["BHK"].isin(bhk_f)) &
+        (df_raw["City"].isin(city_f)) &
+        (df_raw["Price_in_Lakhs"].between(*price_r)) &
+        (df_raw["Property_Type"].isin(prop_f)) &
+        (df_raw["Size_in_SqFt"].between(*area_r))
     ]
-    if invest_only:
-        df_filtered = df_filtered[df_filtered["Good_Investment"] == 1]
+    if inv_only:
+        df_f = df_f[df_f["Good_Investment"]==1]
 
-    st.markdown(f"**{len(df_filtered):,} properties found**")
+    st.markdown(f"**{len(df_f):,} properties found**")
 
-    # Display table
-    display_cols = ["City","Property_Type","BHK","Size_in_SqFt",
-                    "Price_in_Lakhs","Price_per_SqFt","Age_of_Property",
-                    "Infrastructure_Score","Future_Price_5yr","Good_Investment"]
-    show_df = df_filtered[display_cols].copy()
-    show_df["Good_Investment"] = show_df["Good_Investment"].map(
+    show = df_f[["City","Property_Type","BHK","Size_in_SqFt",
+                 "Price_in_Lakhs","Age_of_Property",
+                 "Infrastructure_Score","Future_Price_5yr",
+                 "Good_Investment"]].copy()
+    show["Good_Investment"] = show["Good_Investment"].map(
         {1:"✅ Good", 0:"❌ Not Good"})
-    show_df.columns = ["City","Type","BHK","SqFt","Price(L)",
-                       "Price/SqFt","Age","Infra Score",
-                       "Future Price(L)","Investment"]
-    st.dataframe(show_df.head(100), use_container_width=True, height=400)
+    st.dataframe(show.head(100),
+                 use_container_width=True, height=400)
 
-    # Quick stats
-    if len(df_filtered) > 0:
-        st.divider()
-        s1, s2, s3, s4 = st.columns(4)
+    if len(df_f) > 0:
+        s1,s2,s3,s4 = st.columns(4)
         s1.metric("Avg Price",
-                  f"₹{df_filtered['Price_in_Lakhs'].mean():.0f}L")
+                  f"₹{df_f['Price_in_Lakhs'].mean():.0f}L")
         s2.metric("Avg Size",
-                  f"{df_filtered['Size_in_SqFt'].mean():.0f} SqFt")
+                  f"{df_f['Size_in_SqFt'].mean():.0f} SqFt")
         s3.metric("Good Investment %",
-                  f"{df_filtered['Good_Investment'].mean()*100:.1f}%")
+                  f"{df_f['Good_Investment'].mean()*100:.1f}%")
         s4.metric("Avg Future Price",
-                  f"₹{df_filtered['Future_Price_5yr'].mean():.0f}L")
+                  f"₹{df_f['Future_Price_5yr'].mean():.0f}L")
 
 # ══════════════════════════════════════════════
 # TAB 3 — Visual Insights
@@ -337,133 +333,89 @@ with tab3:
     st.subheader("📊 Visual Insights")
 
     v1, v2 = st.columns(2)
-
-    # Chart 1: City-wise Avg Price
     with v1:
-        st.markdown("#### 🏙️ Top 10 Cities — Average Price")
+        st.markdown("#### 🏙️ Top 10 Cities — Avg Price")
         city_avg = (df_raw.groupby("City")["Price_in_Lakhs"]
                     .mean().sort_values(ascending=False).head(10))
-        fig, ax = plt.subplots(figsize=(7, 4))
-        bars = ax.barh(city_avg.index[::-1], city_avg.values[::-1],
-                       color=plt.cm.RdYlGn(np.linspace(0.2,0.9,10)))
-        ax.set_facecolor("#1a1a2e")
-        fig.patch.set_facecolor("#1a1a2e")
+        fig, ax = plt.subplots(figsize=(6,4))
+        ax.barh(city_avg.index[::-1], city_avg.values[::-1],
+                color=plt.cm.RdYlGn(np.linspace(0.2,0.9,10)))
+        ax.set_facecolor("#1a1a2e"); fig.patch.set_facecolor("#1a1a2e")
         ax.tick_params(colors="white")
         ax.set_xlabel("Avg Price (Lakhs)", color="white")
-        for bar, val in zip(bars, city_avg.values[::-1]):
+        for bar, val in zip(ax.patches, city_avg.values[::-1]):
             ax.text(val+1, bar.get_y()+bar.get_height()/2,
                     f"₹{val:.0f}L", va="center",
                     color="white", fontsize=8)
-        plt.tight_layout()
-        st.pyplot(fig); plt.close()
+        plt.tight_layout(); st.pyplot(fig); plt.close()
 
-    # Chart 2: Investment Rate by City
     with v2:
-        st.markdown("#### ✅ Top 10 Cities — Investment Rate")
+        st.markdown("#### ✅ City — Investment Rate")
         city_inv = (df_raw.groupby("City")["Good_Investment"]
                     .mean().sort_values(ascending=False).head(10)*100)
-        fig, ax = plt.subplots(figsize=(7, 4))
-        clrs = ["#2ecc71" if v>=50 else "#e74c3c" for v in city_inv.values]
-        ax.bar(range(len(city_inv)), city_inv.values,
-               color=clrs, edgecolor="white")
+        fig, ax = plt.subplots(figsize=(6,4))
+        clrs = ["#2ecc71" if v>=50 else "#e74c3c"
+                for v in city_inv.values]
+        ax.bar(range(len(city_inv)), city_inv.values, color=clrs)
         ax.set_xticks(range(len(city_inv)))
         ax.set_xticklabels(city_inv.index, rotation=35,
                            ha="right", color="white", fontsize=8)
-        ax.axhline(50, color="yellow", linestyle="--", linewidth=1)
-        ax.set_facecolor("#1a1a2e")
-        fig.patch.set_facecolor("#1a1a2e")
+        ax.axhline(50, color="yellow", linestyle="--")
+        ax.set_facecolor("#1a1a2e"); fig.patch.set_facecolor("#1a1a2e")
         ax.tick_params(colors="white")
-        ax.set_ylabel("Investment Rate (%)", color="white")
-        for i,v in enumerate(city_inv.values):
-            ax.text(i, v+0.5, f"{v:.0f}%",
-                    ha="center", color="white", fontsize=8)
-        plt.tight_layout()
-        st.pyplot(fig); plt.close()
+        ax.set_ylabel("Rate (%)", color="white")
+        plt.tight_layout(); st.pyplot(fig); plt.close()
 
     v3, v4 = st.columns(2)
-
-    # Chart 3: BHK vs Future Price
     with v3:
-        st.markdown("#### 🏠 BHK vs Future Price (5yr)")
+        st.markdown("#### 🏠 BHK vs Future Price")
         bhk_fp = df_raw.groupby("BHK")["Future_Price_5yr"].mean()
-        fig, ax = plt.subplots(figsize=(6, 4))
+        fig, ax = plt.subplots(figsize=(5,4))
         ax.bar(bhk_fp.index, bhk_fp.values,
-               color=plt.cm.Blues(np.linspace(0.4,0.9,len(bhk_fp))),
-               edgecolor="white")
-        ax.set_facecolor("#1a1a2e")
-        fig.patch.set_facecolor("#1a1a2e")
+               color=plt.cm.Blues(np.linspace(0.4,0.9,len(bhk_fp))))
+        ax.set_facecolor("#1a1a2e"); fig.patch.set_facecolor("#1a1a2e")
         ax.tick_params(colors="white")
         ax.set_xlabel("BHK", color="white")
         ax.set_ylabel("Avg Future Price (L)", color="white")
         for i,v in enumerate(bhk_fp.values):
-            ax.text(bhk_fp.index[i], v+1,
-                    f"₹{v:.0f}L", ha="center",
-                    color="white", fontsize=9)
-        plt.tight_layout()
-        st.pyplot(fig); plt.close()
+            ax.text(bhk_fp.index[i], v+1, f"₹{v:.0f}L",
+                    ha="center", color="white", fontsize=9)
+        plt.tight_layout(); st.pyplot(fig); plt.close()
 
-    # Chart 4: Infrastructure vs Investment
     with v4:
-        st.markdown("#### 🏗️ Infrastructure Score vs Investment Rate")
+        st.markdown("#### 🏗️ Infrastructure vs Investment Rate")
         df_raw["Infra_Group"] = pd.cut(
             df_raw["Infrastructure_Score"], bins=5,
             labels=["Very Low","Low","Medium","High","Very High"])
         infra_inv = (df_raw.groupby("Infra_Group", observed=True)
                      ["Good_Investment"].mean()*100)
-        fig, ax = plt.subplots(figsize=(6, 4))
-        clrs2 = plt.cm.RdYlGn(np.linspace(0.1,0.9,5))
+        fig, ax = plt.subplots(figsize=(5,4))
         ax.bar(infra_inv.index.astype(str), infra_inv.values,
-               color=clrs2, edgecolor="white")
-        ax.axhline(50, color="yellow", linestyle="--", linewidth=1)
-        ax.set_facecolor("#1a1a2e")
-        fig.patch.set_facecolor("#1a1a2e")
+               color=plt.cm.RdYlGn(np.linspace(0.1,0.9,5)))
+        ax.axhline(50, color="yellow", linestyle="--")
+        ax.set_facecolor("#1a1a2e"); fig.patch.set_facecolor("#1a1a2e")
         ax.tick_params(colors="white")
         ax.set_ylabel("Investment Rate (%)", color="white")
         for i,v in enumerate(infra_inv.values):
             ax.text(i, v+0.5, f"{v:.0f}%",
                     ha="center", color="white", fontsize=9)
-        plt.tight_layout()
-        st.pyplot(fig); plt.close()
+        plt.tight_layout(); st.pyplot(fig); plt.close()
 
-    # Chart 5: Correlation Heatmap
-    st.markdown("#### 🔥 Feature Correlation Heatmap")
+    st.markdown("#### 🔥 Correlation Heatmap")
     corr_cols = ["BHK","Size_in_SqFt","Price_in_Lakhs",
                  "Price_per_SqFt","Age_of_Property",
                  "Nearby_Schools","Nearby_Hospitals",
-                 "Infrastructure_Score","Future_Price_5yr","Good_Investment"]
+                 "Infrastructure_Score","Future_Price_5yr",
+                 "Good_Investment"]
     corr = df_raw[corr_cols].corr()
-    fig, ax = plt.subplots(figsize=(10, 5))
-    mask = np.triu(np.ones_like(corr, dtype=bool))
-    sns.heatmap(corr, mask=mask, annot=True, fmt=".2f",
+    fig, ax = plt.subplots(figsize=(10,5))
+    sns.heatmap(corr, annot=True, fmt=".2f",
                 cmap="coolwarm", center=0,
-                linewidths=0.5, ax=ax,
-                annot_kws={"size":8})
-    ax.set_facecolor("#1a1a2e")
+                mask=np.triu(np.ones_like(corr, dtype=bool)),
+                linewidths=0.5, ax=ax, annot_kws={"size":8})
     fig.patch.set_facecolor("#1a1a2e")
     ax.tick_params(colors="white")
-    plt.tight_layout()
-    st.pyplot(fig); plt.close()
-
-    # Chart 6: Price by Property Type
-    st.markdown("#### 🏢 Price Distribution by Property Type")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    prop_types = df_raw["Property_Type"].unique()
-    data_to_plot = [df_raw[df_raw["Property_Type"]==pt]["Price_in_Lakhs"].values
-                    for pt in prop_types]
-    bp = ax.boxplot(data_to_plot, patch_artist=True,
-                    medianprops=dict(color="white", linewidth=2))
-    colors_bp = plt.cm.Set2(np.linspace(0,1,len(prop_types)))
-    for patch, color in zip(bp["boxes"], colors_bp):
-        patch.set_facecolor(color)
-    ax.set_xticks(range(1, len(prop_types)+1))
-    ax.set_xticklabels(prop_types, rotation=20,
-                       ha="right", color="white")
-    ax.set_facecolor("#1a1a2e")
-    fig.patch.set_facecolor("#1a1a2e")
-    ax.tick_params(colors="white")
-    ax.set_ylabel("Price (Lakhs)", color="white")
-    plt.tight_layout()
-    st.pyplot(fig); plt.close()
+    plt.tight_layout(); st.pyplot(fig); plt.close()
 
 # ══════════════════════════════════════════════
 # TAB 4 — Model Performance
@@ -472,91 +424,57 @@ with tab4:
     st.subheader("🤖 Model Performance Dashboard")
 
     p1, p2 = st.columns(2)
-
     with p1:
-        st.markdown("#### 🎯 Classification Model — XGBoost")
+        st.markdown("#### 🎯 Classification — XGBoost")
         st.markdown("""
-        | Metric | Score |
-        |--------|-------|
-        | ✅ Accuracy | **95.44%** |
-        | 🎯 F1 Score | **0.9518** |
-        | 📊 Precision | **0.95** |
-        | 📈 Recall | **0.96** |
-        | 🔄 CV Score | **95.33%** |
+| Metric | Score |
+|--------|-------|
+| ✅ Accuracy | **95.44%** |
+| 🎯 F1 Score | **0.9518** |
+| 📊 CV Score | **95.33%** |
+| 📈 Precision | **0.95** |
+| 🔁 Recall | **0.96** |
         """)
-
-        # Confusion Matrix visual
-        st.markdown("#### Confusion Matrix")
-        cm_data = np.array([[25216, 1432], [846, 22506]])
-        fig, ax = plt.subplots(figsize=(5, 4))
-        sns.heatmap(cm_data, annot=True, fmt="d",
-                    cmap="Greens",
-                    xticklabels=["Not Good","Good Invest"],
-                    yticklabels=["Not Good","Good Invest"],
-                    ax=ax)
+        cm_data = np.array([[25216,1432],[846,22506]])
+        fig, ax = plt.subplots(figsize=(5,4))
+        sns.heatmap(cm_data, annot=True, fmt="d", cmap="Greens",
+                    xticklabels=["Not Good","Good"],
+                    yticklabels=["Not Good","Good"], ax=ax)
         ax.set_ylabel("Actual", color="white")
         ax.set_xlabel("Predicted", color="white")
         ax.tick_params(colors="white")
         fig.patch.set_facecolor("#1a1a2e")
         ax.set_facecolor("#1a1a2e")
-        plt.tight_layout()
-        st.pyplot(fig); plt.close()
+        plt.tight_layout(); st.pyplot(fig); plt.close()
 
     with p2:
-        st.markdown("#### 📈 Regression Model — XGBoost")
+        st.markdown("#### 📈 Regression — XGBoost")
         st.markdown("""
-        | Metric | Score |
-        |--------|-------|
-        | 📉 RMSE | **Low** |
-        | 📊 MAE  | **Low** |
-        | 📈 R²   | **1.00** |
-        | 🏠 Target | Future Price (5yr) |
-        | 🔢 Features | 14 engineered |
+| Metric | Score |
+|--------|-------|
+| 📈 R² Score | **1.00** |
+| 🏠 Target | Future Price (5yr) |
+| 🔢 Features | 14 engineered |
         """)
-
-        # Feature Importance Chart
-        st.markdown("#### 🔑 Top Feature Importances")
         if hasattr(clf_model, "feature_importances_"):
             feat_imp = pd.Series(
                 clf_model.feature_importances_,
-                index=clf_features
-            ).sort_values(ascending=True)
-            fig, ax = plt.subplots(figsize=(6, 4))
-            colors_f = plt.cm.RdYlGn(
-                np.linspace(0.2, 0.9, len(feat_imp)))
+                index=clf_features).sort_values(ascending=True)
+            fig, ax = plt.subplots(figsize=(6,4))
             ax.barh(feat_imp.index, feat_imp.values,
-                    color=colors_f, edgecolor="white")
+                    color=plt.cm.RdYlGn(
+                        np.linspace(0.2,0.9,len(feat_imp))))
             ax.set_facecolor("#1a1a2e")
             fig.patch.set_facecolor("#1a1a2e")
             ax.tick_params(colors="white")
             ax.set_xlabel("Importance", color="white")
-            plt.tight_layout()
-            st.pyplot(fig); plt.close()
+            plt.tight_layout(); st.pyplot(fig); plt.close()
 
     st.divider()
-    st.markdown("#### 📋 Model Comparison Summary")
-    comparison = pd.DataFrame({
+    st.markdown("#### 📋 All Models Compared")
+    st.dataframe(pd.DataFrame({
         "Model"    : ["Logistic Regression","Random Forest","XGBoost"],
-        "Accuracy" : ["82.00%","95.21%","95.44% ✅"],
-        "F1 Score" : ["0.8054","0.9493","0.9518 ✅"],
-        "CV Score" : ["82.38%","95.19%","95.33% ✅"]
-    })
-    st.dataframe(comparison, use_container_width=True,
-                 hide_index=True)
-
-    st.info("""
-    **🏆 Best Models Selected:**
-    - **Classification:** XGBoost (95.44% Accuracy, F1=0.9518)
-    - **Regression:** XGBoost (R²=1.00)
-    - **MLflow:** All experiments tracked and logged ✅
-    """)
-
-# ── Footer ──
-st.markdown("---")
-st.markdown(
-    "<p style=\'text-align:center; color:#a8b2d8;\'>"
-    "🏠 Real Estate Investment Advisor | "
-    "Built with Python, Scikit-learn, XGBoost & Streamlit"
-    "</p>",
-    unsafe_allow_html=True
-)
+        "Accuracy" : ["82.00%","95.21%","95.44% 🏆"],
+        "F1 Score" : ["0.8054","0.9493","0.9518 🏆"],
+        "CV Score" : ["82.38%","95.19%","95.33% 🏆"]
+    }), use_container_width=True, hide_index=True)
