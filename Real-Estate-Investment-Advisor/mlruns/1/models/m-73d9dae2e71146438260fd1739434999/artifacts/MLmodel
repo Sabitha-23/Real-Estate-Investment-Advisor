@@ -1,0 +1,23 @@
+artifact_path: /content/Real-Estate-Investment-Advisor/Real-Estate-Investment-Advisor/Real-Estate-Investment-Advisor/mlruns/1/models/m-73d9dae2e71146438260fd1739434999/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.13
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.6.1
+    skops_trusted_types: null
+mlflow_version: 3.11.1
+model_id: m-73d9dae2e71146438260fd1739434999
+model_size_bytes: 376876
+model_uuid: m-73d9dae2e71146438260fd1739434999
+prompts: null
+run_id: 964a9a2dca0246e0a45c12bb95fd37d3
+utc_time_created: '2026-04-18 04:47:21.552708'
