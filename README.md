@@ -145,29 +145,6 @@ real-estate-investment-advisor/
 
 ---
 
-## ▶️ How to Run the Project
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Sabitha-23/real-estate-investment-advisor.git
-cd real-estate-investment-advisor
-```
-
-### 2. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Run Streamlit App
-
-```bash
-streamlit run app.py
-```
-
----
-
 ##  Results
 
 * Achieved high accuracy in classification model
@@ -192,6 +169,10 @@ streamlit run app.py
 * Deploy on cloud platforms
 
 ---
+
+### 🔗 Live App
+👉 https://real-estate-investment-advisor-nyqprwszzjunhebfkfzcgf.streamlit.app/
+
 
 ##  Conclusion
 
