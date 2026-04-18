@@ -1,11 +1,9 @@
+streamlit>=1.28.0
 pandas
 numpy
 scikit-learn
 xgboost
-streamlit
-mlflow
 joblib
-plotly
-seaborn
 matplotlib
-gdown
+seaborn
+mlflow
